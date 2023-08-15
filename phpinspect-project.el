@@ -56,6 +56,7 @@ indexed classes in the project")
                   :documentation
                   "A hash able that contains all of the currently indexed functions
 in the project")
+  (function-token-index (make-hash-table :test 'eq :size 100 :rehash-size 1.5))
   (fs nil
       :type phpinspect-fs
       :documentation
@@ -66,7 +67,10 @@ can be accessed.")
     :documentation
     "The autoload object through which this project's type
 definitions can be retrieved")
-  (worker (phpinspect-make-dynamic-worker)
+  (worker (progn
+            (unless (featurep 'phpinspect-worker)
+              (require 'phpinspect-worker))
+            (phpinspect-make-dynamic-worker))
           :type phpinspect-worker
           :documentation
           "The worker that this project may queue tasks for")
@@ -158,6 +162,10 @@ indexed by the absolute paths of the files they're watching."))
   ((project phpinspect-project) (name symbol))
   (gethash name (phpinspect-project-function-index project)))
 
+(cl-defmethod phpinspect-project-delete-function
+  ((project phpinspect-project) (name symbol))
+  (remhash name (phpinspect-project-function-index project)))
+
 (cl-defmethod phpinspect-project-get-functions ((project phpinspect-project))
   (let ((funcs))
     (maphash
@@ -173,22 +181,31 @@ indexed by the absolute paths of the files they're watching."))
       (phpinspect--log "Adding import to index queue: %s" import)
       (phpinspect-project-enqueue-if-not-present project (cdr import)))))
 
+(cl-defmethod phpinspect-project-delete-class ((project phpinspect-project) (class phpinspect--class))
+  (phpinspect-project-delete-class project (phpinspect--class-name class)))
+
+(cl-defmethod phpinspect-project-delete-class ((project phpinspect-project) (class-name phpinspect--type))
+  (remhash (phpinspect--type-name-symbol class-name) (phpinspect-project-class-index project)))
+
 (cl-defmethod phpinspect-project-add-class
   ((project phpinspect-project) (indexed-class (head phpinspect--indexed-class)) &optional index-imports)
-  (let* ((class-name (phpinspect--type-name-symbol
-                      (alist-get 'class-name (cdr indexed-class))))
-         (class (gethash class-name
-                         (phpinspect-project-class-index project))))
-    (unless class
-      (setq class (phpinspect--make-class-generated :project project)))
+  (if (not (alist-get 'class-name (cdr indexed-class)))
+      (phpinspect--log "Error: Class with declaration %s does not have a name" (alist-get 'declaration indexed-class))
+    ;; Else
+    (let* ((class-name (phpinspect--type-name-symbol
+                        (alist-get 'class-name (cdr indexed-class))))
+           (class (gethash class-name
+                           (phpinspect-project-class-index project))))
+      (unless class
+        (setq class (phpinspect--make-class-generated :project project)))
 
-    (when index-imports
-      (phpinspect-project-enqueue-imports
-       project (alist-get 'imports (cdr indexed-class))))
+      (when index-imports
+        (phpinspect-project-enqueue-imports
+         project (alist-get 'imports (cdr indexed-class))))
 
-    (phpinspect--class-set-index class indexed-class)
-    (puthash class-name class (phpinspect-project-class-index project))
-    (phpinspect-project-add-class-attribute-types-to-index-queue project class)))
+      (phpinspect--class-set-index class indexed-class)
+      (puthash class-name class (phpinspect-project-class-index project))
+      (phpinspect-project-add-class-attribute-types-to-index-queue project class))))
 
 (cl-defmethod phpinspect-project-set-class
   ((project phpinspect-project) (class-fqn phpinspect--type) (class phpinspect--class))
@@ -203,11 +220,12 @@ indexed by the absolute paths of the files they're watching."))
     class))
 
 (cl-defmethod phpinspect-project-get-class-create
-  ((project phpinspect-project) (class-fqn phpinspect--type))
+  ((project phpinspect-project) (class-fqn phpinspect--type) &optional no-enqueue)
   (let ((class (phpinspect-project-get-class project class-fqn)))
     (unless class
       (setq class (phpinspect-project-create-class project class-fqn))
-      (phpinspect-project-enqueue-if-not-present project class-fqn))
+      (unless no-enqueue
+        (phpinspect-project-enqueue-if-not-present project class-fqn)))
     class))
 
 (defalias 'phpinspect-project-add-class-if-missing #'phpinspect-project-get-class-create)

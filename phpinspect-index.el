@@ -27,6 +27,7 @@
 (require 'phpinspect-util)
 (require 'phpinspect-project)
 (require 'phpinspect-type)
+(require 'phpinspect-parser)
 
 (defun phpinspect--function-from-scope (scope)
   (cond ((and (phpinspect-static-p (cadr scope))
@@ -65,11 +66,14 @@ of TYPE, if available."
 If ADD-USED-TYPES is set, it must be a function and will be
 called with a list of the types that are used within the
 function (think \"new\" statements, return types etc.)."
+  (phpinspect--log "Indexing function")
   (let* ((php-func (cadr scope))
          (declaration (cadr php-func))
          (type (if (phpinspect-word-p (car (last declaration)))
                    (funcall type-resolver
                             (phpinspect--make-type :name (cadar (last declaration)))))))
+
+    (phpinspect--log "Checking function return annotations")
 
     ;; @return annotation. When dealing with a collection, we want to store the
     ;; type of its members.
@@ -106,8 +110,10 @@ function (think \"new\" statements, return types etc.)."
         (when type (push (phpinspect--type-bare-name type) used-types))
         (funcall add-used-types used-types)))
 
+    (phpinspect--log "Creating function object")
     (phpinspect--make-function
      :scope `(,(car scope))
+     :token php-func
      :name (concat (if namespace (concat namespace "\\") "") (cadadr (cdr declaration)))
      :return-type (or type phpinspect--null-type)
      :arguments (phpinspect--index-function-arg-list
@@ -115,11 +121,16 @@ function (think \"new\" statements, return types etc.)."
                  (phpinspect-function-argument-list php-func)
                  add-used-types))))
 
+(define-inline phpinspect--safe-cadr (list)
+  (inline-letevals (list)
+    (inline-quote
+     (when (listp ,list) (cadr ,list)))))
+
 (defun phpinspect--index-const-from-scope (scope)
   (phpinspect--make-variable
    :scope `(,(car scope))
    :mutability `(,(caadr scope))
-   :name (cadr (cadr (cadr scope)))))
+   :name (phpinspect--safe-cadr (phpinspect--safe-cadr (phpinspect--safe-cadr scope)))))
 
 (defun phpinspect--var-annotations-from-token (token)
   (seq-filter #'phpinspect-var-annotation-p token))
@@ -184,6 +195,39 @@ function (think \"new\" statements, return types etc.)."
                   methods)))))
     methods))
 
+(defun phpinspect--index-class-declaration (decl type-resolver)
+  ;; Find out what the class extends or implements
+  (let (encountered-extends encountered-implements encountered-class
+        class-name extends implements used-types)
+    (dolist (word decl)
+      (if (phpinspect-word-p word)
+          (cond ((string= (cadr word) "extends")
+                 (phpinspect--log "Class %s extends other classes" class-name)
+                 (setq encountered-extends t))
+                ((string= (cadr word) "implements")
+                 (setq encountered-extends nil)
+                 (phpinspect--log "Class %s implements in interface" class-name)
+                 (setq encountered-implements t))
+                ((string= (cadr word) "class")
+                 (setq encountered-class t))
+                (t
+                 (phpinspect--log "Calling Resolver from index-class on %s" (cadr word))
+                 (cond (encountered-extends
+                        (push (funcall type-resolver (phpinspect--make-type
+                                                      :name (cadr word)))
+                              extends)
+                        (push (cadr word) used-types))
+                       (encountered-implements
+                        (push (funcall type-resolver (phpinspect--make-type
+                                                      :name (cadr word)))
+                              implements)
+                        (push (cadr word) used-types))
+                       (encountered-class
+                        (setq class-name (funcall type-resolver (phpinspect--make-type :name (cadr word)))
+                              encountered-class nil)))))))
+
+    (list class-name extends implements used-types)))
+
 
 (defun phpinspect--index-class (imports type-resolver location-resolver class &optional doc-block)
   "Create an alist with relevant attributes of a parsed class."
@@ -195,7 +239,7 @@ function (think \"new\" statements, return types etc.)."
         (constants)
         (extends)
         (implements)
-        (class-name (phpinspect--get-class-name-from-token class))
+        (class-name)
         ;; Keep track of encountered comments to be able to use type
         ;; annotations.
         (comment-before)
@@ -208,30 +252,9 @@ function (think \"new\" statements, return types etc.)."
                 (nconc used-types additional-used-types)
               (setq used-types additional-used-types))))
 
-    ;; Find out what the class extends or implements
-    (let ((enc-extends nil)
-          (enc-implements nil))
-      (dolist (word (cadr class))
-        (if (phpinspect-word-p word)
-            (cond ((string= (cadr word) "extends")
-                   (phpinspect--log "Class %s extends other classes" class-name)
-                   (setq enc-extends t))
-                  ((string= (cadr word) "implements")
-                   (setq enc-extends nil)
-                   (phpinspect--log "Class %s implements in interface" class-name)
-                   (setq enc-implements t))
-                  (t
-                   (phpinspect--log "Calling Resolver from index-class on %s" (cadr word))
-                   (cond (enc-extends
-                          (push (funcall type-resolver (phpinspect--make-type
-                                                        :name (cadr word)))
-                                extends)
-                          (push (cadr word) used-types))
-                         (enc-implements
-                          (push (funcall type-resolver (phpinspect--make-type
-                                                        :name (cadr word)))
-                                implements)
-                          (push (cadr word) used-types))))))))
+    (pcase-setq `(,class-name ,extends ,implements ,used-types)
+                (phpinspect--index-class-declaration (cadr class) type-resolver))
+
 
     (dolist (token (caddr class))
       (cond ((phpinspect-scope-p token)
@@ -330,21 +353,22 @@ function (think \"new\" statements, return types etc.)."
       (setq methods
             (nconc methods (phpinspect--index-method-annotations type-resolver doc-block))))
 
-    (let ((class-name (funcall type-resolver (phpinspect--make-type :name class-name))))
-      `(,class-name .
-                    (phpinspect--indexed-class
-                     (class-name . ,class-name)
-                     (location . ,(funcall location-resolver class))
-                     (imports . ,imports)
-                     (methods . ,methods)
-                     (static-methods . ,static-methods)
-                     (static-variables . ,static-variables)
-                     (variables . ,variables)
-                     (constants . ,constants)
-                     (extends . ,extends)
-                     (implements . ,implements)
-                     (used-types . ,(mapcar #'phpinspect-intern-name
-                                            (seq-uniq used-types #'string=))))))))
+    `(,class-name .
+                  (phpinspect--indexed-class
+                   (complete . ,(not (phpinspect-incomplete-class-p class)))
+                   (class-name . ,class-name)
+                   (declaration . ,(seq-find #'phpinspect-declaration-p class))
+                   (location . ,(funcall location-resolver class))
+                   (imports . ,imports)
+                   (methods . ,methods)
+                   (static-methods . ,static-methods)
+                   (static-variables . ,static-variables)
+                   (variables . ,variables)
+                   (constants . ,constants)
+                   (extends . ,extends)
+                   (implements . ,implements)
+                   (used-types . ,(mapcar #'phpinspect-intern-name
+                                          (seq-uniq used-types #'string=)))))))
 
 (defsubst phpinspect-namespace-body (namespace)
   "Return the nested tokens in NAMESPACE tokens' body.
@@ -472,7 +496,7 @@ Return value is a list of the types that are \"newed\"."
 (defun phpinspect--index-tokens (tokens &optional type-resolver-factory location-resolver)
   "Index TOKENS as returned by `phpinspect--parse-current-buffer`."
   (or
-   (condition-case err
+   (condition-case-unless-debug err
        (progn
          (unless type-resolver-factory
            (setq type-resolver-factory #'phpinspect--make-type-resolver))
@@ -503,9 +527,6 @@ Return value is a list of the types that are \"newed\"."
                              tokens type-resolver-factory imports))))))
      (t
       (phpinspect--log "phpinspect--index-tokens failed: %s. Enable debug-on-error for backtrace." err)
-      (when debug-on-error
-        (require 'backtrace)
-        (backtrace))
       nil))
    '(phpinspect--root-index)))
 

@@ -79,10 +79,6 @@
 
       (phpinspect-pctx-bmap context))))
 
-(defun phpinspect-after-change-function (start end pre-change-length)
-  (when phpinspect-current-buffer
-    (phpinspect-buffer-register-edit phpinspect-current-buffer start end pre-change-length)))
-
 (defun phpinspect--init-mode ()
   "Initialize the phpinspect minor mode for the current buffer."
   (phpinspect-ensure-worker)
@@ -259,7 +255,6 @@ Example configuration for `company-mode':
            (let ((match (match-string 0)))
              (substring match 1 (length match))))
           ((looking-back "[A-Za-z_0-9-]+" nil t)
-           (message "Matched string %s" (match-string 0))
            (match-string 0))))
    ((eq command 'post-completion)
     (when (eq 'function (phpinspect--completion-kind
@@ -294,20 +289,6 @@ Example configuration for `company-mode':
    ((eq command 'meta)
     (phpinspect--completion-meta
               (phpinspect--completion-list-get-metadata phpinspect--last-completion-list arg)))))
-
-(defun phpinspect-purge-cache ()
-  "Assign a fresh, empty cache object to `phpinspect-cache'.
-This effectively purges any cached code information from all
-currently opened projects."
-  (interactive)
-  (when phpinspect-cache
-    ;; Allow currently known cached projects to cleanup after themselves
-    (maphash (lambda (_ project)
-               (phpinspect-project-purge project))
-             (phpinspect--cache-projects phpinspect-cache)))
-
-  ;; Assign a fresh cache object
-  (setq phpinspect-cache (phpinspect--make-cache)))
 
 (defsubst phpinspect-insert-file-contents (&rest args)
   "Call `phpinspect-insert-file-contents-function' with ARGS as arguments."
