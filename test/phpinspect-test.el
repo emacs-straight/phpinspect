@@ -1,6 +1,6 @@
 ;;; phpinspect-test.el --- Unit tests for phpinspect.el  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021 Free Software Foundation, Inc.
+;; Copyright (C) 2021-2023 Free Software Foundation, Inc.
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 
@@ -27,7 +27,7 @@
 (require 'phpinspect)
 
 (require 'phpinspect-test-env
-         (concat (file-name-directory (or load-file-name buffer-file-name))
+         (concat (file-name-directory (or load-file-name buffer-file-name byte-compile-current-file))
                  "phpinspect-test-env.el"))
 
 (ert-deftest phpinspect-get-variable-type-in-block ()
@@ -217,7 +217,7 @@
 
 
 (ert-deftest phpinspect-resolve-type-from-context ()
-  (let* ((pctx (phpinspect-make-pctx :incremental t))
+  (let* ((pctx (phpinspect-make-pctx :incremental t :bmap (phpinspect-make-bmap)))
          (code "
 namespace Amazing;
 
@@ -314,7 +314,7 @@ class Thing
 
     function doStuff()
     {
-        $this->getThis(new \DateTime(), bla)")
+        $this->getThis(new \\DateTime(), bla)")
          (tokens (phpinspect-parse-string php-code))
          (index (phpinspect--index-tokens tokens))
          (phpinspect-project-root-function (lambda () "phpinspect-test"))

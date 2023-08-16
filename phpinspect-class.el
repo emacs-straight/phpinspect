@@ -1,6 +1,6 @@
 ;;; phpinspect-class.el --- PHP parsing module  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -26,10 +26,11 @@
 (require 'phpinspect-type)
 
 (cl-defstruct (phpinspect--class (:constructor phpinspect--make-class-generated))
-  (project nil
-           :type phpinspect-project
-           :documentaton
-           "The project that this class belongs to")
+  (class-retriever nil
+                   :type lambda
+                   :documentaton
+                   "A function that returns classes for types
+(should accept `phpinspect--type' as argument)")
   (index nil
          :type phpinspect--indexed-class
          :documentation
@@ -76,8 +77,7 @@
          #'phpinspect--class-p
          (mapcar
           (lambda (class-name)
-            (phpinspect-project-get-class-create (phpinspect--class-project class)
-                                                 class-name))
+            (funcall (phpinspect--class-class-retriever class) class-name))
           extensions)))
 
   (dolist (extended (phpinspect--class-extended-classes class))

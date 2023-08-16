@@ -1,6 +1,6 @@
 ;;; phpinspect-toc.el --- PHP parsing and completion package  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -24,7 +24,8 @@
 ;;; Code:
 
 (require 'phpinspect-splayt)
-(require 'phpinspect-parser)
+(eval-when-compile
+  (require 'phpinspect-meta))
 
 (defun phpinspect-make-toc (&optional tree)
   (let ((table (make-hash-table :test #'eq :size 20 :rehash-size 2.0)))

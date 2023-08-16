@@ -1,6 +1,6 @@
 ;;; phpinspect-test.el --- Unit tests for phpinspect.el  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021 Free Software Foundation, Inc.
+;; Copyright (C) 2021-2023 Free Software Foundation, Inc.
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 
@@ -29,7 +29,7 @@
 
 (ert-deftest phpinspect-pctx-cancel ()
   (let ((meta (phpinspect-make-meta nil 10 20 "    " 'token 'overlay nil))
-        (pctx (phpinspect-make-pctx)))
+        (pctx (phpinspect-make-pctx :bmap (phpinspect-make-bmap))))
     (phpinspect-with-parse-context pctx
       (phpinspect-meta-with-changeset meta
         (setf (phpinspect-meta-absolute-start meta) 222)

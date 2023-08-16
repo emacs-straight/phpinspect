@@ -1,6 +1,6 @@
 ;;; phpinspect-pipeline.el --- PHP parsing and completion package  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -129,7 +129,7 @@ directories."
 (define-inline phpinspect-pipeline-pause ()
   "Pause the current pipeline thread"
   (inline-quote
-   (if (input-pending-p)
+   (if (phpinspect--input-pending-p)
        (let ((mx (make-mutex)))
          (phpinspect-thread-pause
           phpinspect-pipeline-pause-time mx (make-condition-variable mx "phpinspect-pipeline-pause")))
@@ -147,22 +147,23 @@ directories."
     (error "Function name must be a symbol, got: %s" func-name))
 
 
-  (let ((thread-name (concat "phpinspect-pipeline-" (symbol-name func-name)))
-        (statement (list func-name))
-        (incoming (gensym "incoming"))
-        (outgoing (gensym "outgoing"))
-        (inc-queue (gensym "queue"))
-        (out-queue (gensym "queue"))
-        (context-sym (gensym "context"))
-        (continue-running (gensym "continue-running"))
-        (pctx-sym (gensym "pipeline-ctx"))
-        (incoming-end (gensym "incoming-end"))
-        (end (gensym "end")))
+  (let* ((thread-name (concat "phpinspect-pipeline-" (symbol-name func-name)))
+         (statement (list func-name))
+         (statement-rear statement)
+         (incoming (gensym "incoming"))
+         (outgoing (gensym "outgoing"))
+         (inc-queue (gensym "queue"))
+         (out-queue (gensym "queue"))
+         (context-sym (gensym "context"))
+         (continue-running (gensym "continue-running"))
+         (pctx-sym (gensym "pipeline-ctx"))
+         (incoming-end (gensym "incoming-end"))
+         (end (gensym "end")))
 
       (when local-ctx
-        (setq statement (nconc statement (list context-sym))))
+        (setq statement-rear (setcdr statement-rear (cons context-sym nil))))
 
-      (setq statement (nconc statement (list incoming)))
+      (setq statement-rear (setcdr statement-rear (cons incoming nil)))
 
       `(let ((,inc-queue ,queue)
              (,out-queue ,consumer-queue)
@@ -273,11 +274,9 @@ directories."
              (while parameters
                (setq key (pop parameters)
                      value (pop parameters))
-               (when (eq :with-context key)
-                 (setq value `(quote ,value)))
                (setq key (intern (string-replace ":with-" ":" (symbol-name key))))
                (setq construct-params (nconc construct-params (list key value)))))
-           (push (eval `(phpinspect--make-pipeline-step ,@construct-params :name (quote ,name)))
+           (push (apply #'phpinspect--make-pipeline-step `(,@construct-params :name ,name))
                  steps)))
         (_ (error "unexpected key %s" key))))
 
@@ -320,7 +319,7 @@ directories."
             ,queue-sym (phpinspect-make-pipeline-end :thread (current-thread)))
 
            (while ,collecting-sym
-             (ignore-error 'phpinspect-pipeline-incoming
+             (ignore-error phpinspect-pipeline-incoming
                (progn
                  (phpinspect-pipeline--register-wakeup-function ,end-queue-sym)
                  (while (not (phpinspect-pipeline-end-p

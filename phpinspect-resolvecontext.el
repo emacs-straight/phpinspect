@@ -1,6 +1,6 @@
 ;;; phpinspect-resolvecontext.el --- PHP parsing and completion package  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -24,11 +24,30 @@
 ;;; Code:
 
 (require 'phpinspect-bmap)
+(require 'phpinspect-cache)
 (require 'phpinspect-project)
-(require 'phpinspect-parser)
+(require 'phpinspect-token-predicates)
 (require 'phpinspect-type)
 (require 'phpinspect-meta)
 (require 'phpinspect-util)
+
+
+(defsubst phpinspect-blocklike-p (token)
+  (or (phpinspect-block-p token)
+      (phpinspect-function-p token)
+      (phpinspect-class-p token)
+      (phpinspect-namespace-p token)))
+
+(defsubst phpinspect-return-p (token)
+  (and (phpinspect-word-p token)
+       (string= "return" (cadr token))))
+
+(define-inline phpinspect-statement-introduction-p (token)
+  (inline-letevals (token)
+    (inline-quote
+     (or (phpinspect-return-p ,token)
+         (phpinspect-end-of-statement-p ,token)
+         (phpinspect-function-p ,token)))))
 
 (cl-defstruct (phpinspect--resolvecontext
             (:constructor phpinspect--make-resolvecontext))
@@ -54,17 +73,6 @@
   "Add ENCLOSING-TOKEN to RESOLVECONTEXTs enclosing token stack."
   (push enclosing-token (phpinspect--resolvecontext-enclosing-tokens
                          resolvecontext)))
-
-
-(defsubst phpinspect-blocklike-p (token)
-  (or (phpinspect-block-p token)
-      (phpinspect-function-p token)
-      (phpinspect-class-p token)
-      (phpinspect-namespace-p token)))
-
-(defsubst phpinspect-return-p (token)
-  (and (phpinspect-word-p token)
-       (string= "return" (cadr token))))
 
 (defun phpinspect-find-statement-before-point (bmap meta point)
   (let ((children (reverse (phpinspect-meta-find-children-before meta point)))

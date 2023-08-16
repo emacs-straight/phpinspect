@@ -1,6 +1,6 @@
 ;;; phpinspect-parse-context.el --- PHP parsing context module  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -26,7 +26,6 @@
 (require 'phpinspect-util)
 (require 'phpinspect-meta)
 (require 'phpinspect-changeset)
-(require 'phpinspect-bmap)
 
 (defvar phpinspect-parse-context nil
   "An instance of `phpinspect-pctx' that is used when
@@ -37,7 +36,7 @@ parsing. Usually used in combination with
   "Parser Context"
   (incremental nil)
   (meta-iterator nil)
-  (interrupt-threshold (time-convert '(2 . 1000))
+  (interrupt-threshold (time-convert '(0 0 2000 0))
                        :documentation
                        "After how much time `interrupt-predicate'
 should be polled. This is 2ms by default.")
@@ -55,7 +54,7 @@ thrown.")
               :documentation "Metadata change sets executed during this parse")
   (edtrack nil
            :type phpinspect-edtrack)
-  (bmap (phpinspect-make-bmap)
+  (bmap nil
         :type phpinspect-bmap)
   (previous-bmap nil
                  :type phpinspect-bmap)
@@ -94,12 +93,24 @@ thrown.")
    (progn
      (push ,changeset (phpinspect-pctx-changesets ,pctx)))))
 
+(define-inline phpinspect-meta-with-changeset (meta &rest body)
+  (declare (indent 1))
+  (inline-letevals (meta)
+    (push 'progn body)
+    (inline-quote
+     (progn
+       (when phpinspect-parse-context
+         (phpinspect-pctx-register-changeset
+          phpinspect-parse-context (phpinspect-make-changeset ,meta)))
+       ,body))))
+
+
 (define-inline phpinspect-pctx-check-interrupt (pctx)
   (inline-letevals (pctx)
     (inline-quote
      (progn
        (unless (phpinspect-pctx--start-time ,pctx)
-         (setf (phpinspect-pctx--start-time ,pctx) (time-convert nil)))
+         (setf (phpinspect-pctx--start-time ,pctx) (time-convert nil t)))
 
        ;; Interrupt when blocking too long while input is pending.
        (when (and (time-less-p (phpinspect-pctx-interrupt-threshold ,pctx)
@@ -107,12 +118,6 @@ thrown.")
                   (funcall (phpinspect-pctx-interrupt-predicate ,pctx)))
          (phpinspect-pctx-cancel ,pctx)
          (throw 'phpinspect-parse-interrupted nil))))))
-
-(define-inline phpinspect-pctx-register-token (pctx token start end)
-  (inline-letevals (pctx)
-    (inline-quote
-     (phpinspect-bmap-register
-      (phpinspect-pctx-bmap ,pctx) ,start ,end ,token (phpinspect-pctx-consume-whitespace ,pctx)))))
 
 (define-inline phpinspect-pctx-register-whitespace (pctx whitespace)
   (inline-quote

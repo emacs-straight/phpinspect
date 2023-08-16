@@ -1,6 +1,6 @@
 ;;; phpinspect-util.el --- PHP parsing and completion package  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -31,31 +31,6 @@ PHP. Used to optimize string comparison.")
   '("composer.json" "composer.lock" ".git" ".svn" ".hg")
   "List of files that could indicate a project root directory.")
 
-(defun phpinspect--find-project-root (&optional start-file)
-  "(Attempt to) Find the root directory of the visited PHP project.
-If a found project root has a parent directory called \"vendor\",
-the search continues upwards. See also
-`phpinspect--locate-dominating-project-file'.
-
-If START-FILE is provided, searching starts at the directory
-level of START-FILE in stead of `default-directory`."
-  (let ((project-file (phpinspect--locate-dominating-project-file
-                       (or start-file default-directory))))
-    (phpinspect--log "Checking for project root at  %s" project-file)
-    (when project-file
-      (let* ((directory (file-name-directory project-file))
-             (directory-slugs (split-string (expand-file-name directory) "/")))
-        (if (not (member "vendor" directory-slugs))
-            (expand-file-name directory)
-          ;; else. Only continue if the parent directory is not "/"
-          (let ((parent-without-vendor
-                 (string-join (seq-take-while (lambda (s) (not (string= s "vendor" )))
-                                              directory-slugs)
-                              "/")))
-            (when (not (or (string= parent-without-vendor "/")
-                           (string= parent-without-vendor "")))
-              (phpinspect--find-project-root parent-without-vendor))))))))
-
 (defvar phpinspect--debug nil
   "Enable debug logs for phpinspect by setting this variable to true")
 
@@ -65,10 +40,10 @@ level of START-FILE in stead of `default-directory`."
       (message "Enabled phpinspect logging.")
     (message "Disabled phpinspect logging.")))
 
-(defvar phpinspect-log-groups nil)
-(defvar phpinspect-enabled-log-groups nil)
-
-(defvar-local phpinspect--current-log-group nil)
+(eval-and-compile
+  (defvar phpinspect-log-groups nil)
+  (defvar phpinspect-enabled-log-groups nil)
+  (defvar-local phpinspect--current-log-group nil))
 
 (define-inline phpinspect--declare-log-group (group)
   (unless (and (inline-const-p group) (symbolp (inline-const-val group)))
@@ -108,6 +83,31 @@ level of START-FILE in stead of `default-directory`."
 (defun phpinspect-unfilter-logs ()
   (interactive)
   (setq phpinspect-enabled-log-groups nil))
+
+(defun phpinspect--find-project-root (&optional start-file)
+  "(Attempt to) Find the root directory of the visited PHP project.
+If a found project root has a parent directory called \"vendor\",
+the search continues upwards. See also
+`phpinspect--locate-dominating-project-file'.
+
+If START-FILE is provided, searching starts at the directory
+level of START-FILE in stead of `default-directory`."
+  (let ((project-file (phpinspect--locate-dominating-project-file
+                       (or start-file default-directory))))
+    (phpinspect--log "Checking for project root at  %s" project-file)
+    (when project-file
+      (let* ((directory (file-name-directory project-file))
+             (directory-slugs (split-string (expand-file-name directory) "/")))
+        (if (not (member "vendor" directory-slugs))
+            (expand-file-name directory)
+          ;; else. Only continue if the parent directory is not "/"
+          (let ((parent-without-vendor
+                 (string-join (seq-take-while (lambda (s) (not (string= s "vendor" )))
+                                              directory-slugs)
+                              "/")))
+            (when (not (or (string= parent-without-vendor "/")
+                           (string= parent-without-vendor "")))
+              (phpinspect--find-project-root parent-without-vendor))))))))
 
 (defsubst phpinspect-intern-name (name)
   (intern name phpinspect-name-obarray))
@@ -179,7 +179,10 @@ it evaluates to a non-nil value."
          (sequence-pos 0)
          (sequence-sym (gensym))
          (match-sym (gensym))
-         checkers key value)
+         (match-rear-sym (gensym))
+         (checkers (cons nil nil))
+         (checkers-rear checkers)
+         key value)
 
     (while (setq key (pop pattern))
       (unless (keywordp key)
@@ -190,26 +193,37 @@ it evaluates to a non-nil value."
 
       (cond ((eq key :m)
              (unless (eq value '*)
-               (setq checkers
-                     (nconc checkers (list `(equal ,value (elt ,sequence-sym ,sequence-pos)))))))
+               (setq checkers-rear
+                     (setcdr checkers-rear
+                             (cons `(equal ,value (elt ,sequence-sym ,sequence-pos)) nil)))))
             ((eq key :f)
-             (setq checkers
-                   (nconc
-                    checkers (list
-                              (if (symbolp value)
-                                  `(,value (elt ,sequence-sym ,sequence-pos))
-                                `(funcall ,value (elt ,sequence-sym ,sequence-pos)))))))
+             (setq checkers-rear
+                   (setcdr
+                    checkers-rear
+                    (cons
+                     (if (symbolp value)
+                         `(,value (elt ,sequence-sym ,sequence-pos))
+                       `(funcall ,value (elt ,sequence-sym ,sequence-pos)))
+                     nil))))
             (t (error "Invalid keyword: %s" key)))
 
-      (setq checkers (nconc checkers (list `(setq ,match-sym (nconc ,match-sym (list (elt ,sequence-sym ,sequence-pos)))))))
+      (setq checkers-rear
+            (setcdr checkers-rear
+                    (cons `(setq ,match-rear-sym
+                                 (setcdr ,match-rear-sym
+                                         (cons (elt ,sequence-sym ,sequence-pos) nil)))
+                          nil)))
 
       (setq sequence-pos (+ sequence-pos 1)))
 
-    `(let ((,sequence-sym ,sequence)
-           ,match-sym)
+    (setq checkers (cdr checkers))
+
+    `(let* ((,sequence-sym ,sequence)
+            (,match-sym (cons nil nil))
+            (,match-rear-sym ,match-sym))
        (and (= ,sequence-length (length ,sequence))
             ,@checkers)
-       ,match-sym)))
+       (cdr ,match-sym))))
 
 (defun phpinspect--pattern-concat (pattern1 pattern2)
   (let* ((pattern1-sequence-length (/ (length (phpinspect--pattern-code pattern1)) 2)))
@@ -251,6 +265,10 @@ context for completion."
 	     (json-key-type 'string))
      ,@body))
 
+(defun phpinspect--input-pending-p (&optional check-timers)
+  (unless noninteractive
+    (input-pending-p check-timers)))
+
 (defun phpinspect-thread-pause (pause-time mx continue)
   "Pause current thread using MX and CONTINUE for PAUSE-TIME idle seconds.
 
@@ -264,17 +282,6 @@ CONTINUE must be a condition-variable"
    (lambda () (with-mutex mx (condition-notify continue))))
   (with-mutex mx (condition-wait continue))
   (phpinspect--log "Thread '%s' continuing execution" (thread-name (current-thread))))
-
-(defun phpinspect-namespace-name (namespace)
-  (or (and (phpinspect-namespace-p namespace)
-           (phpinspect-word-p (cadr namespace))
-           (cadadr namespace))
-      ""))
-
-
-(defsubst phpinspect-probably-token-p (token)
-  (and (listp token)
-       (keywordp (car token))))
 
 (provide 'phpinspect-util)
 ;;; phpinspect-util.el ends here

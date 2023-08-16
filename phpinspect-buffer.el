@@ -1,6 +1,6 @@
 ;;; phpinspect-buffer.el --- PHP parsing and completion package  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -23,6 +23,7 @@
 
 ;;; Code:
 
+(require 'phpinspect-class)
 (require 'phpinspect-parser)
 (require 'phpinspect-bmap)
 (require 'phpinspect-edtrack)
@@ -77,7 +78,7 @@ linked with."
         (let* ((map (phpinspect-make-bmap))
                (buffer-map (phpinspect-buffer-map buffer))
                (ctx (phpinspect-make-pctx
-                     :interrupt-predicate (unless no-interrupt #'input-pending-p)
+                     :interrupt-predicate (unless no-interrupt #'phpinspect--input-pending-p)
                      :bmap map
                      :incremental t
                      :previous-bmap buffer-map
@@ -429,10 +430,10 @@ linked with."
 
   ;; Take into account "atoms" (tokens without clear delimiters like words,
   ;; variables and object attributes. The meaning of these tokens will change as
-  ;; they grow or shrink, so their ful regions need to be marked for a reparse).
+  ;; they grow or shrink, so their full regions need to be marked for a reparse).
   (save-excursion
     (goto-char start)
-    (when (looking-back "\\($|->|::\\)?[^][)(}{[:blank:]\n;'\"]+" nil t)
+    (when (looking-back "\\(\\$\\|->\\|::\\)?[^][)(}{[:blank:]\n;'\"]+" nil t)
       (setq start (- start (length (match-string 0))))
       (setq pre-change-length (+ pre-change-length (length (match-string 0))))))
 

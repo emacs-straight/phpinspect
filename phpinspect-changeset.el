@@ -1,6 +1,6 @@
 ;;; phpinspect-changeset.el --- Metadata changeset module  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2021  Free Software Foundation, Inc
+;; Copyright (C) 2021-2023  Free Software Foundation, Inc
 
 ;; Author: Hugo Thunnissen <devel@hugot.nl>
 ;; Keywords: php, languages, tools, convenience
@@ -22,6 +22,9 @@
 ;;; Commentary:
 
 ;;; Code:
+
+(eval-when-compile
+  (require 'phpinspect-meta))
 
 (define-inline phpinspect-make-changeset (meta)
   (inline-letevals (meta)
@@ -47,17 +50,6 @@
 
 (define-inline phpinspect-changeset-meta (set)
   (inline-quote (car (nthcdr 5 ,set))))
-
-(define-inline phpinspect-meta-with-changeset (meta &rest body)
-  (declare (indent 1))
-  (inline-letevals (meta)
-    (push 'progn body)
-    (inline-quote
-     (progn
-       (when phpinspect-parse-context
-         (phpinspect-pctx-register-changeset
-          phpinspect-parse-context (phpinspect-make-changeset ,meta)))
-       ,body))))
 
 (define-inline phpinspect-changeset-revert (changeset)
   (inline-letevals (changeset)
