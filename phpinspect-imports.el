@@ -100,11 +100,11 @@ buffer position to insert the use statement at."
 
     (let ((fqns (gethash typename fqn-bags)))
       (cond ((= 1 (length fqns))
-             (phpinspect-add-use (symbol-name (car fqns)) buffer namespace-token))
+             (phpinspect-add-use (phpinspect-name-string (car fqns)) buffer namespace-token))
             ((> (length fqns) 1)
              (phpinspect-add-use (completing-read "Class: " fqns)
                                  buffer namespace-token))
-            (t (message "No import found for type %s" typename))))))
+            (t (phpinspect-message "No import found for type %s" typename))))))
 
 (defun phpinspect-namespace-part-of-typename (typename)
   (string-trim-right typename "\\\\?[^\\]+"))
@@ -122,7 +122,7 @@ buffer position to insert the use statement at."
       ;; with a fully qualified name.
       (unless (or (or (alist-get type imports))
                   (gethash (phpinspect-intern-name
-                            (concat namespace-name "\\" (symbol-name type)))
+                            (concat namespace-name "\\" (phpinspect-name-string type)))
                            (phpinspect-autoloader-types
                             (phpinspect-project-autoload project))))
         (phpinspect-add-use-interactive type buffer project namespace)

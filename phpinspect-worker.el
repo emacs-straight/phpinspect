@@ -31,6 +31,9 @@
 (require 'phpinspect-queue)
 (require 'phpinspect-pipeline)
 
+(eval-when-compile
+  (phpinspect--declare-log-group 'worker))
+
 (defcustom phpinspect-worker-pause-time 1
   "Number of seconds that `phpinspect-worker' should pause when
 user input is detected. A higher value means better
@@ -93,6 +96,7 @@ on the worker independent of dynamic variables during testing.")
 
 (cl-defmethod phpinspect-worker-wakeup ((worker phpinspect-worker))
   (when (eq main-thread (thread--blocker (phpinspect-worker-thread worker)))
+    (phpinspect--log "Attempting to wakeup worker thread")
     (thread-signal (phpinspect-worker-thread worker)
                    'phpinspect-wakeup-thread nil)))
 
@@ -120,6 +124,7 @@ on the worker independent of dynamic variables during testing.")
   "Specialized enqueuement method for index tasks. Prevents
 indexation tasks from being added when there are identical tasks
 already present in the queue."
+  (phpinspect--log "Enqueuing task")
   (phpinspect-queue-enqueue-noduplicate (phpinspect-worker-queue worker) task #'phpinspect-task=))
 
 (cl-defmethod phpinspect-worker-enqueue ((worker phpinspect-dynamic-worker) task)
@@ -128,34 +133,47 @@ already present in the queue."
 (cl-defgeneric phpinspect-worker-make-thread-function (worker)
   "Create a function that can be used to start WORKER's thread.")
 
+(defun phpinspect--worker-pause ()
+  (let* ((mx (make-mutex))
+         (continue (make-condition-variable mx)))
+    (phpinspect-thread-pause phpinspect-worker-pause-time mx continue)))
+
 (cl-defmethod phpinspect-worker-make-thread-function ((worker phpinspect-worker))
   (lambda ()
     (while (phpinspect-worker-continue-running worker)
       ;; This error is used to wake up the thread when new tasks are added to the
       ;; queue.
       (condition-case err
-          (ignore-error phpinspect-wakeup-thread
-            (let* ((task (phpinspect-queue-dequeue (phpinspect-worker-queue worker)))
-                   (mx (make-mutex))
-                   (continue (make-condition-variable mx)))
-              (if task
-                  ;; Execute task if it belongs to a project that has not been
-                  ;; purged (meaning that it is still actively used).
-                  (unless (phpinspect-project-purged (phpinspect-task-project task))
-                    (phpinspect-task-execute task worker))
-                ;; else: join with the main thread until wakeup is signaled
-                (thread-join main-thread))
+          (progn
+            (phpinspect--log "Dequeueing next task")
+            (ignore-error phpinspect-wakeup-thread
+              ;; Prevent quitting during tasks, as this can break data integrity
+              (let* ((inhibit-quit t)
+                     (task (phpinspect-queue-dequeue (phpinspect-worker-queue worker))))
+                (if task
+                    ;; Execute task if it belongs to a project that has not been
+                    ;; purged (meaning that it is still actively used).
+                    (if (phpinspect-project-purged (phpinspect-task-project task))
+                        (phpinspect--log "Projecthas been purged. Skipping task")
+                      (phpinspect--log "Executing task")
+                      (phpinspect-task-execute task worker))
+                  ;; else: join with the main thread until wakeup is signaled
+                  (phpinspect--log "No tasks, joining main thread")
+                  (thread-join main-thread))))
 
-              ;; Pause for a second after indexing something, to allow user input to
-              ;; interrupt the thread.
-              (unless (or (not (phpinspect--input-pending-p))
-                          (phpinspect-worker-skip-next-pause worker))
-                (phpinspect-thread-pause phpinspect-worker-pause-time mx continue))
-              (setf (phpinspect-worker-skip-next-pause worker) nil)))
+            ;; Pause for a second after indexing something, to allow user input to
+            ;; interrupt the thread.
+            (unless (or (not (phpinspect--input-pending-p))
+                        (phpinspect-worker-skip-next-pause worker))
+              (phpinspect--worker-pause))
+            (setf (phpinspect-worker-skip-next-pause worker) nil))
+        (quit (ignore-error phpinspect-wakeup-thread
+                (phpinspect--worker-pause)))
+        (phpinspect-wakeup-thread)
         ((debug error) (thread-signal main-thread 'phpinspect-worker-error err))
         (t (phpinspect--log "Phpinspect worker thread errored :%s" err))))
     (phpinspect--log "Worker thread exiting")
-    (message "phpinspect worker thread exited")))
+    (phpinspect-message "phpinspect worker thread exited")))
 
 (cl-defmethod phpinspect-worker-make-thread-function ((worker phpinspect-dynamic-worker))
   (phpinspect-worker-make-thread-function
@@ -224,6 +242,9 @@ already present in the queue."
 
 (cl-defgeneric phpinspect-task-project (task)
   "The project that this task belongs to.")
+
+(cl-defmethod phpinspect-worker-enqueue ((_worker (eql 'nil-worker)) &rest _ignored))
+(cl-defmethod phpinspect-worker-live-p ((_worker (eql 'nil-worker)) &rest _ignored) t)
 
 (provide 'phpinspect-worker)
 ;;; phpinspect-worker.el ends here
